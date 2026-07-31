@@ -10,8 +10,8 @@ router.post("/chat", async (req, res) => {
   }
 
   try {
-    const reply = await runConversation(messages);
-    res.json({ reply });
+    const { reply, ui, messages: updatedMessages } = await runConversation(messages);
+    res.json({ reply, ui, messages: updatedMessages });
   } catch (err) {
     console.error("Aoki error:", err.message);
     res.status(500).json({ error: "Error interno del agente" });

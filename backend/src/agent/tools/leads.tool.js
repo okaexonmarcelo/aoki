@@ -9,7 +9,10 @@ module.exports = {
     input_schema: {
       type: "object",
       properties: {
-        dni: { type: "string", description: "DNI del usuario, 8 dígitos" },
+        dni: {
+          type: ["string", "number"],
+          description: "DNI del usuario, 8 dígitos",
+        },
       },
       required: ["dni"],
     },
@@ -18,7 +21,7 @@ module.exports = {
   async execute(input) {
     const url = new URL(`${BASE_URL}/leads`);
     url.searchParams.set("documentType", "DNI");
-    url.searchParams.set("documentNumber", input.dni);
+    url.searchParams.set("documentNumber", String(input.dni));
 
     const res = await fetch(url, {
       headers: {

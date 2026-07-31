@@ -39,6 +39,91 @@ async function createCompletion(messages) {
   });
 }
 
+function findLastToolCall(messages, toolNames) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "assistant" || !Array.isArray(message.tool_calls)) continue;
+
+    const call = message.tool_calls.find((c) => toolNames.includes(c.function.name));
+    if (!call) continue;
+
+    const resultMessage = messages.find(
+      (m) => m.role === "tool" && m.tool_call_id === call.id,
+    );
+    if (!resultMessage) continue;
+
+    return {
+      name: call.function.name,
+      args: JSON.parse(call.function.arguments),
+      result: JSON.parse(resultMessage.content),
+    };
+  }
+  return null;
+}
+
+function buildUi(messages) {
+  const last = findLastToolCall(messages, [
+    "convertir_lead_a_loan",
+    "simular_seguro",
+    "consultar_leads",
+  ]);
+  if (!last) return null;
+
+  switch (last.name) {
+    case "consultar_leads": {
+      const leads = Array.isArray(last.result) ? last.result : [];
+      const activeLead = leads.find((lead) => lead.status === "ACTIVE");
+      if (!activeLead || !Array.isArray(activeLead.offers)) return null;
+
+      return {
+        type: "offer_selector",
+        leadId: activeLead.id,
+        options: activeLead.offers.map((offer) => ({
+          amount: offer.amount,
+          term: offer.term,
+          interestRate: offer.interestRate,
+          approxInstallment: offer.approxInstallment,
+          label: `S/ ${offer.amount} en ${offer.term} cuotas`,
+        })),
+      };
+    }
+
+    case "simular_seguro": {
+      const r = last.result || {};
+      return {
+        type: "insurance_selector",
+        monto: last.args.monto,
+        plazo: last.args.plazo,
+        cuotaSinSeguro: r.cuota_sin_seguro,
+        cuotaConSeguros: r.cuota_con_seguros,
+        tcea: r.tcea,
+        options: [
+          {
+            id: "vida_plus",
+            label: "Vida Plus",
+            prima: r.seguro_vida_plus?.prima,
+            descripcion: r.seguro_vida_plus?.descripcion,
+          },
+          {
+            id: "desempleo",
+            label: "Desempleo",
+            prima: r.seguro_desempleo?.prima,
+            descripcion: r.seguro_desempleo?.descripcion,
+          },
+        ],
+      };
+    }
+
+    case "convertir_lead_a_loan": {
+      const url = last.result?.url_onboarding;
+      return url ? { type: "onboarding_redirect", url } : null;
+    }
+
+    default:
+      return null;
+  }
+}
+
 async function runConversation(history) {
   let messages = [{ role: "system", content: SYSTEM_PROMPT }, ...history];
   let response = await createCompletion(messages);
@@ -74,10 +159,21 @@ async function runConversation(history) {
     response = await createCompletion(messages);
   }
 
-  return (
-    response.choices[0].message.content ??
-    "Lo siento, no pude procesar tu solicitud en este momento. Intenta de nuevo."
-  );
+  const finalMessage = {
+    role: "assistant",
+    content:
+      response.choices[0].message.content ??
+      "Lo siento, no pude procesar tu solicitud en este momento. Intenta de nuevo.",
+  };
+  messages = [...messages, finalMessage];
+
+  const updatedHistory = messages.slice(1); // sin el system prompt
+
+  return {
+    reply: finalMessage.content,
+    ui: buildUi(messages),
+    messages: updatedHistory,
+  };
 }
 
 module.exports = { runConversation };
