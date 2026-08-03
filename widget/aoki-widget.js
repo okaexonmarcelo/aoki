@@ -40,6 +40,21 @@
     ".aoki-option.selected { border-color: " + COLORS.greenDark + "; background: " + COLORS.greenLight + "; }" +
     ".aoki-cta { background: " + COLORS.green + "; color: " + COLORS.greenDark + "; border: none; border-radius: 10px;" +
     " padding: 10px; font-weight: 700; cursor: pointer; font-size: 13px; }" +
+    ".aoki-cta:disabled { opacity: 0.5; cursor: not-allowed; }" +
+    ".aoki-product-card { display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid #d8dce6;" +
+    " border-radius: 12px; padding: 10px 12px; cursor: pointer; text-align: left; width: 100%; }" +
+    ".aoki-product-card:hover { border-color: " + COLORS.green + "; }" +
+    ".aoki-product-card.selected { border-color: " + COLORS.greenDark + "; background: " + COLORS.greenLight + "; }" +
+    ".aoki-product-icon { font-size: 22px; line-height: 1; flex-shrink: 0; }" +
+    ".aoki-product-body { flex: 1; min-width: 0; }" +
+    ".aoki-product-title { font-size: 13px; font-weight: 700; color: " + COLORS.navy + "; margin: 0 0 2px; }" +
+    ".aoki-product-desc { font-size: 11px; color: #555; line-height: 1.35; margin: 0 0 6px; }" +
+    ".aoki-product-tag { display: inline-block; font-size: 10px; font-weight: 600; color: " + COLORS.greenDark + ";" +
+    " background: " + COLORS.greenLight + "; border-radius: 20px; padding: 2px 8px; }" +
+    ".aoki-product-radio { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #c7cbd6; flex-shrink: 0; position: relative; }" +
+    ".aoki-product-card.selected .aoki-product-radio { border-color: " + COLORS.greenDark + "; }" +
+    ".aoki-product-card.selected .aoki-product-radio::after { content: ''; position: absolute; top: 2px; left: 2px;" +
+    " width: 10px; height: 10px; border-radius: 50%; background: " + COLORS.greenDark + "; }" +
     ".aoki-input-row { display: flex; border-top: 1px solid #e5e5ea; padding: 8px; gap: 8px; }" +
     ".aoki-input-row input { flex: 1; border: 1px solid #d8dce6; border-radius: 20px; padding: 8px 12px; font-size: 13px; }" +
     ".aoki-input-row button { background: " + COLORS.green + "; color: " + COLORS.greenDark + "; border: none;" +
@@ -81,10 +96,23 @@
     }
   });
 
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderBubbleText(text) {
+    return escapeHtml(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  }
+
   function appendBubble(role, text) {
     var bubble = document.createElement("div");
     bubble.className = "aoki-bubble " + role;
-    bubble.textContent = text;
+    bubble.innerHTML = renderBubbleText(text);
     messagesEl.appendChild(bubble);
     scrollToBottom();
   }
@@ -123,6 +151,70 @@
         });
         container.appendChild(btn);
       });
+    } else if (ui.type === "product_selector") {
+      var selectedProduct = null;
+      var cards = [];
+
+      var confirmBtn = document.createElement("button");
+      confirmBtn.type = "button";
+      confirmBtn.className = "aoki-cta";
+      confirmBtn.textContent = "Continuar";
+      confirmBtn.disabled = true;
+
+      (ui.options || []).forEach(function (opt) {
+        var card = document.createElement("button");
+        card.type = "button";
+        card.className = "aoki-product-card";
+
+        var icon = document.createElement("span");
+        icon.className = "aoki-product-icon";
+        icon.textContent = opt.icon || "";
+
+        var body = document.createElement("span");
+        body.className = "aoki-product-body";
+
+        var title = document.createElement("span");
+        title.className = "aoki-product-title";
+        title.style.display = "block";
+        title.textContent = opt.label;
+
+        var desc = document.createElement("span");
+        desc.className = "aoki-product-desc";
+        desc.style.display = "block";
+        desc.textContent = opt.description || "";
+
+        var tag = document.createElement("span");
+        tag.className = "aoki-product-tag";
+        tag.textContent = opt.tag || "";
+
+        body.appendChild(title);
+        body.appendChild(desc);
+        body.appendChild(tag);
+
+        var radio = document.createElement("span");
+        radio.className = "aoki-product-radio";
+
+        card.appendChild(icon);
+        card.appendChild(body);
+        card.appendChild(radio);
+
+        card.addEventListener("click", function () {
+          selectedProduct = opt;
+          cards.forEach(function (c) {
+            c.classList.toggle("selected", c === card);
+          });
+          confirmBtn.disabled = false;
+        });
+
+        cards.push(card);
+        container.appendChild(card);
+      });
+
+      confirmBtn.addEventListener("click", function () {
+        if (!selectedProduct) return;
+        sendMessage("Elijo " + selectedProduct.label);
+      });
+      container.appendChild(confirmBtn);
     } else if (ui.type === "insurance_selector") {
       var selected = {};
       (ui.options || []).forEach(function (opt) {

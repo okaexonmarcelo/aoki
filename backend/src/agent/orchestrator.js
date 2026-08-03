@@ -72,20 +72,39 @@ function buildUi(messages) {
   switch (last.name) {
     case "consultar_leads": {
       const leads = Array.isArray(last.result) ? last.result : [];
-      const activeLead = leads.find((lead) => lead.status === "ACTIVE");
-      if (!activeLead || !Array.isArray(activeLead.offers)) return null;
+      const activeLeads = leads.filter((lead) => lead.status === "ACTIVE");
+      if (!activeLeads.length) return null;
 
-      return {
-        type: "offer_selector",
-        leadId: activeLead.id,
-        options: activeLead.offers.map((offer) => ({
-          amount: offer.amount,
-          term: offer.term,
-          interestRate: offer.interestRate,
-          approxInstallment: offer.approxInstallment,
-          label: `S/ ${offer.amount} en ${offer.term} cuotas`,
-        })),
+      const PRODUCT_BY_SUBTYPE = {
+        BNPL: {
+          id: "credito_oka",
+          label: "Crédito Oka",
+          description:
+            "Renueva tu hogar hoy y paga en cómodas cuotas. Electrodomésticos y tecnología en Hiraoka, sin esperar.",
+          tag: "Exclusivo Hiraoka",
+          icon: "🛋️",
+        },
+        LD: {
+          id: "efectivo_oka",
+          label: "Efectivo Oka",
+          description:
+            "Dinero en tu cuenta en minutos, sin explicaciones. Úsalo como tú decidas: emergencia, viaje o lo que necesites.",
+          tag: "Libre disponibilidad",
+          icon: "💵",
+        },
       };
+
+      const options = activeLeads
+        .map((lead) => {
+          const product = PRODUCT_BY_SUBTYPE[lead.product?.subType];
+          if (!product) return null;
+          return { leadId: lead.id, subType: lead.product.subType, ...product };
+        })
+        .filter(Boolean);
+
+      if (!options.length) return null;
+
+      return { type: "product_selector", options };
     }
 
     case "simular_seguro": {
