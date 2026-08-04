@@ -3,6 +3,7 @@ const { SYSTEM_PROMPT } = require("./prompts");
 const leadsTool = require("./tools/leads.tool");
 const segurosTool = require("./tools/seguros.tool");
 const salesTool = require("./tools/sales.tool");
+const customerTool = require("./tools/customer.tool");
 
 const MODEL = "openai/gpt-oss-120b";
 const MAX_TOOL_ROUNDS = 5;
@@ -13,6 +14,7 @@ const TOOLS_BY_NAME = {
   [leadsTool.definition.name]: leadsTool,
   [segurosTool.definition.name]: segurosTool,
   [salesTool.definition.name]: salesTool,
+  [customerTool.definition.name]: customerTool,
 };
 
 const TOOL_SPECS = Object.values(TOOLS_BY_NAME).map((t) => ({
