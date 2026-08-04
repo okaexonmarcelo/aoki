@@ -1,5 +1,4 @@
-const BASE_URL =
-  process.env.OKA_LEADS_BASE_URL || "https://api.dev.oka.com.pe/v1";
+const { okaGet } = require("./okaClient");
 
 module.exports = {
   definition: {
@@ -19,15 +18,9 @@ module.exports = {
   },
 
   async execute(input) {
-    const url = new URL(`${BASE_URL}/leads`);
-    url.searchParams.set("documentType", "DNI");
-    url.searchParams.set("documentNumber", String(input.dni));
-
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        Authorization: `Bearer ${process.env.OKA_LEADS_TOKEN}`,
-      },
+    const res = await okaGet("/leads", {
+      documentType: "DNI",
+      documentNumber: input.dni,
     });
 
     if (!res.ok) {

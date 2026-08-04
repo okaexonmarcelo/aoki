@@ -1,5 +1,4 @@
-const BASE_URL =
-  process.env.OKA_LEADS_BASE_URL || "https://api.dev.oka.com.pe/v1";
+const { okaPost } = require("./okaClient");
 
 module.exports = {
   definition: {
@@ -48,19 +47,6 @@ module.exports = {
         : ["LIFE"],
     };
 
-    const res = await fetch(`${BASE_URL}/simulations`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OKA_LEADS_TOKEN}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      throw new Error(`simulate_credit respondió ${res.status}`);
-    }
-
-    return res.json();
+    return okaPost("/simulations", payload);
   },
 };

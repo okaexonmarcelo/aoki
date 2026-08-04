@@ -1,5 +1,4 @@
-const BASE_URL =
-  process.env.OKA_LEADS_BASE_URL || "https://api.dev.oka.com.pe/v1";
+const { okaGet } = require("./okaClient");
 
 module.exports = {
   definition: {
@@ -23,15 +22,9 @@ module.exports = {
   },
 
   async execute(input) {
-    const url = new URL(`${BASE_URL}/customers`);
-    url.searchParams.set("type", input.type);
-    url.searchParams.set("number", String(input.number));
-
-    const res = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        Authorization: `Bearer ${process.env.OKA_LEADS_TOKEN}`,
-      },
+    const res = await okaGet("/customers", {
+      type: input.type,
+      number: input.number,
     });
 
     if (res.status === 404) return null;
