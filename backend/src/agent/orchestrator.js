@@ -4,6 +4,7 @@ const leadsTool = require("./tools/leads.tool");
 const segurosTool = require("./tools/seguros.tool");
 const salesTool = require("./tools/sales.tool");
 const customerTool = require("./tools/customer.tool");
+const simulateCreditTool = require("./tools/simulate-credit.tool");
 
 const MODEL = "openai/gpt-oss-120b";
 const MAX_TOOL_ROUNDS = 5;
@@ -15,6 +16,7 @@ const TOOLS_BY_NAME = {
   [segurosTool.definition.name]: segurosTool,
   [salesTool.definition.name]: salesTool,
   [customerTool.definition.name]: customerTool,
+  [simulateCreditTool.definition.name]: simulateCreditTool,
 };
 
 const TOOL_SPECS = Object.values(TOOLS_BY_NAME).map((t) => ({
@@ -67,6 +69,7 @@ function buildUi(messages) {
   const last = findLastToolCall(messages, [
     "convertir_lead_a_loan",
     "simular_seguro",
+    "simulate_credit",
     "consultar_leads",
   ]);
   if (!last) return null;
@@ -107,6 +110,34 @@ function buildUi(messages) {
       if (!options.length) return null;
 
       return { type: "product_selector", options };
+    }
+
+    case "simulate_credit": {
+      const simulations = Array.isArray(last.result) ? last.result : [];
+      if (!simulations.length) return null;
+
+      const leadsCall = findLastToolCall(messages, ["consultar_leads"]);
+      const leads = Array.isArray(leadsCall?.result) ? leadsCall.result : [];
+      const lead = leads.find((l) => l.id === last.args.lead_id);
+      const maxAmount = lead?.amount ?? last.args.amount;
+
+      return {
+        type: "credit_simulator",
+        leadId: last.args.lead_id,
+        customerId: last.args.customer_id,
+        amount: last.args.amount,
+        minAmount: 500,
+        maxAmount,
+        step: 100,
+        paymentDay: last.args.payment_day,
+        options: simulations.map((s) => ({
+          term: s.term,
+          monthlyPayment: s.monthlyPayment,
+          interestRate: s.interestRate,
+          totalRate: s.totalRate,
+          totalPayment: s.totalPayment,
+        })),
+      };
     }
 
     case "simular_seguro": {

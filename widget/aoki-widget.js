@@ -55,6 +55,16 @@
     ".aoki-product-card.selected .aoki-product-radio { border-color: " + COLORS.greenDark + "; }" +
     ".aoki-product-card.selected .aoki-product-radio::after { content: ''; position: absolute; top: 2px; left: 2px;" +
     " width: 10px; height: 10px; border-radius: 50%; background: " + COLORS.greenDark + "; }" +
+    ".aoki-sim-card { display: flex; flex-direction: column; gap: 10px; background: #fff; border: 1px solid #d8dce6;" +
+    " border-radius: 12px; padding: 12px; }" +
+    ".aoki-sim-row-header { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: #555; }" +
+    ".aoki-sim-row-header strong { font-size: 13px; color: " + COLORS.navy + "; }" +
+    ".aoki-sim-slider { width: 100%; accent-color: " + COLORS.greenDark + "; }" +
+    ".aoki-sim-range-labels { display: flex; justify-content: space-between; font-size: 10px; color: #888; }" +
+    ".aoki-sim-quote { background: " + COLORS.navy + "; color: #fff; border-radius: 10px; padding: 10px; text-align: center; }" +
+    ".aoki-sim-quote-label { font-size: 11px; color: #c9cbe0; margin-bottom: 2px; }" +
+    ".aoki-sim-quote-value { font-size: 20px; font-weight: 700; color: " + COLORS.green + "; }" +
+    ".aoki-sim-quote-sub { font-size: 10px; color: #c9cbe0; margin-top: 4px; }" +
     ".aoki-input-row { display: flex; border-top: 1px solid #e5e5ea; padding: 8px; gap: 8px; }" +
     ".aoki-input-row input { flex: 1; border: 1px solid #d8dce6; border-radius: 20px; padding: 8px 12px; font-size: 13px; }" +
     ".aoki-input-row button { background: " + COLORS.green + "; color: " + COLORS.greenDark + "; border: none;" +
@@ -248,6 +258,123 @@
         sendMessage(text);
       });
       container.appendChild(confirmBtn);
+    } else if (ui.type === "credit_simulator") {
+      var options = ui.options || [];
+      if (!options.length) return;
+      var termIndex = 0;
+      var currentAmount = ui.amount;
+
+      var quote = document.createElement("div");
+      quote.className = "aoki-sim-quote";
+      var quoteLabel = document.createElement("div");
+      quoteLabel.className = "aoki-sim-quote-label";
+      quoteLabel.textContent = "Tu cuota mensual estimada";
+      var quoteValue = document.createElement("div");
+      quoteValue.className = "aoki-sim-quote-value";
+      var quoteSub = document.createElement("div");
+      quoteSub.className = "aoki-sim-quote-sub";
+      quote.appendChild(quoteLabel);
+      quote.appendChild(quoteValue);
+      quote.appendChild(quoteSub);
+
+      function updateQuote() {
+        var opt = options[termIndex];
+        quoteValue.textContent = "S/ " + opt.monthlyPayment.toFixed(2);
+        quoteSub.textContent = "TCEA: " + opt.totalRate + "%";
+      }
+
+      // monto
+      var montoRow = document.createElement("div");
+      var montoHeader = document.createElement("div");
+      montoHeader.className = "aoki-sim-row-header";
+      var montoLabelText = document.createElement("span");
+      montoLabelText.textContent = "Monto solicitado";
+      var montoValueText = document.createElement("strong");
+      montoValueText.textContent = "S/ " + currentAmount;
+      montoHeader.appendChild(montoLabelText);
+      montoHeader.appendChild(montoValueText);
+
+      var montoSlider = document.createElement("input");
+      montoSlider.type = "range";
+      montoSlider.className = "aoki-sim-slider";
+      montoSlider.min = ui.minAmount;
+      montoSlider.max = ui.maxAmount;
+      montoSlider.step = ui.step || 100;
+      montoSlider.value = currentAmount;
+
+      var montoLabels = document.createElement("div");
+      montoLabels.className = "aoki-sim-range-labels";
+      montoLabels.innerHTML =
+        "<span>S/ " + ui.minAmount + "</span><span>Máx. S/ " + ui.maxAmount + "</span>";
+
+      montoSlider.addEventListener("input", function () {
+        currentAmount = Number(montoSlider.value);
+        montoValueText.textContent = "S/ " + currentAmount;
+      });
+      montoSlider.addEventListener("change", function () {
+        sendMessage(
+          "Simula S/ " + montoSlider.value + " en " + options[termIndex].term + " cuotas",
+        );
+      });
+
+      montoRow.appendChild(montoHeader);
+      montoRow.appendChild(montoSlider);
+      montoRow.appendChild(montoLabels);
+
+      // plazo
+      var plazoRow = document.createElement("div");
+      var plazoHeader = document.createElement("div");
+      plazoHeader.className = "aoki-sim-row-header";
+      var plazoLabelText = document.createElement("span");
+      plazoLabelText.textContent = "Número de cuotas";
+      var plazoValueText = document.createElement("strong");
+      plazoValueText.textContent = options[termIndex].term + " cuotas";
+      plazoHeader.appendChild(plazoLabelText);
+      plazoHeader.appendChild(plazoValueText);
+
+      var plazoSlider = document.createElement("input");
+      plazoSlider.type = "range";
+      plazoSlider.className = "aoki-sim-slider";
+      plazoSlider.min = 0;
+      plazoSlider.max = options.length - 1;
+      plazoSlider.step = 1;
+      plazoSlider.value = termIndex;
+
+      var plazoLabels = document.createElement("div");
+      plazoLabels.className = "aoki-sim-range-labels";
+      plazoLabels.innerHTML =
+        "<span>" + options[0].term + " meses</span><span>" +
+        options[options.length - 1].term + " meses</span>";
+
+      plazoSlider.addEventListener("input", function () {
+        termIndex = Number(plazoSlider.value);
+        plazoValueText.textContent = options[termIndex].term + " cuotas";
+        updateQuote();
+      });
+
+      plazoRow.appendChild(plazoHeader);
+      plazoRow.appendChild(plazoSlider);
+      plazoRow.appendChild(plazoLabels);
+
+      var cta = document.createElement("button");
+      cta.type = "button";
+      cta.className = "aoki-cta";
+      cta.textContent = "Ver resumen de mi crédito";
+      cta.addEventListener("click", function () {
+        sendMessage(
+          "Confirmo S/ " + currentAmount + " en " + options[termIndex].term + " cuotas",
+        );
+      });
+
+      updateQuote();
+
+      var card = document.createElement("div");
+      card.className = "aoki-sim-card";
+      card.appendChild(montoRow);
+      card.appendChild(plazoRow);
+      card.appendChild(quote);
+      card.appendChild(cta);
+      container.appendChild(card);
     } else if (ui.type === "onboarding_redirect") {
       var cta = document.createElement("button");
       cta.type = "button";
