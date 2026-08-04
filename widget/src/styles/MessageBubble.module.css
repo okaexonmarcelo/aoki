@@ -1,0 +1,21 @@
+.bubble {
+  max-width: 85%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.assistant {
+  background: #fff;
+  border: 1px solid #e5e5ea;
+  align-self: flex-start;
+}
+
+.user {
+  background: #0a0a2e;
+  color: #fff;
+  align-self: flex-end;
+}

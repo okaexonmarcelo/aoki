@@ -1,13 +1,18 @@
-const BASE_URL = process.env.OKA_BASE_URL || "https://api.oka.com.pe/v1";
+import { env } from "../../config/env";
 
-function authHeaders(extra) {
+const BASE_URL = env.OKA_BASE_URL;
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
   return {
-    Authorization: `Bearer ${process.env.OKA_TOKEN}`,
+    Authorization: `Bearer ${env.OKA_TOKEN}`,
     ...extra,
   };
 }
 
-async function okaGet(path, params) {
+export async function okaGet(
+  path: string,
+  params?: Record<string, unknown>,
+): Promise<Response> {
   const url = new URL(`${BASE_URL}${path}`);
   Object.entries(params || {}).forEach(([key, value]) => {
     url.searchParams.set(key, String(value));
@@ -18,7 +23,10 @@ async function okaGet(path, params) {
   });
 }
 
-async function okaPost(path, body) {
+export async function okaPost<T = unknown>(
+  path: string,
+  body: unknown,
+): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
@@ -29,7 +37,5 @@ async function okaPost(path, body) {
     throw new Error(`Oka API ${path} respondió ${res.status}`);
   }
 
-  return res.json();
+  return (await res.json()) as T;
 }
-
-module.exports = { okaGet, okaPost };

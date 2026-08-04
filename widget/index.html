@@ -3,15 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aoki — prueba local del widget</title>
+    <title>Aoki — dev harness</title>
   </head>
   <body>
-    <h1>Página de prueba — widget Aoki</h1>
+    <h1>Página de prueba — widget Aoki (dev mode)</h1>
     <p>
-      Esta página es solo un arnés para probar <code>aoki-widget.js</code> en
-      local. El demo con el aspecto real de oka.com.pe es un paso posterior.
+      Servido por Vite dev server con HMR. El demo con el build de producción
+      real está en <code>demo-prod.html</code>.
     </p>
-
-    <script src="aoki-widget.js" data-api-url="http://localhost:3000/chat"></script>
+    <script type="module" src="/src/main.tsx" data-api-url="http://localhost:3000/chat"></script>
   </body>
 </html>

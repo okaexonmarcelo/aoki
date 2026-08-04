@@ -1,0 +1,38 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: #f4fad4;
+  border: 1px solid #d8dce6;
+  border-radius: 12px;
+  padding: 16px 12px;
+  text-align: center;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #3b6d11;
+}
+
+.loanId {
+  font-size: 11px;
+  color: #555;
+  margin-bottom: 6px;
+}
+
+.cta {
+  width: 100%;
+  background: #c8e63c;
+  color: #3b6d11;
+  border: none;
+  border-radius: 10px;
+  padding: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: center;
+  text-decoration: none;
+  display: block;
+}

@@ -4,6 +4,31 @@
 
 ---
 
+## 0. Estado actual (post-MVP)
+
+El plan de 4 semanas descrito en la sección 7 **ya se completó**. Dos cosas importantes divergieron de lo planeado originalmente en este documento — léelas antes que el resto:
+
+1. **El modelo usado es Groq (`openai/gpt-oss-120b`), no Claude API/Anthropic.** Las secciones de este documento que mencionan `@anthropic-ai/sdk`/`ANTHROPIC_API_KEY` describen el plan inicial; el MVP real se construyó sobre `groq-sdk`.
+2. **El backend se migró a TypeScript y el widget a React + TypeScript** (después de completado el MVP en JS plano), para mejorar mantenibilidad. Los ejemplos de código de la sección 6 quedaron obsoletos — el código real y actualizado vive en `backend/src/` y `widget/src/`. Ver `Readme.md` (raíz del repo) para la estructura y comandos actuales.
+3. **`simular_seguro` (`POST /seguros/simular`) y `convertir_lead_a_loan` (`POST /sales/convert`) nunca fueron endpoints reales de Oka** — eran placeholders del diseño inicial que no existían en la API real y devolvían error al usarse. Se eliminaron y reemplazaron por una sola tool `create_sale` (`POST /leads/{leadId}/sales`, ver Readme.md). El paso de "resumen" (antes `insurance_selector`, montado sobre `simular_seguro`) ahora se construye enteramente en el widget a partir de los datos que ya trae `simulate_credit`, sin llamar a ningún endpoint adicional. Las secciones 3.5, 3.6 (renombradas como históricas) describen el diseño viejo/incorrecto — quedan como contexto, no como referencia de la API real. La sección 3.4 y el flujo de la sección 4 ya están actualizados con `create_sale`.
+
+Resumen del stack real hoy:
+
+| Capa                | Tecnología                                                        |
+| ------------------- | ------------------------------------------------------------------ |
+| Backend             | Node.js + **TypeScript**, Express                                  |
+| Modelo de lenguaje  | **Groq** (`openai/gpt-oss-120b`), vía `groq-sdk`                    |
+| Validación runtime  | **zod** (inputs de tools vía `defineTool()`, y `env.ts`)            |
+| Tools del agente    | `get_customer`, `consultar_leads`, `simulate_credit`, `create_sale` |
+| Widget frontend     | **React + TypeScript**, Vite (modo librería) → un único IIFE        |
+| Estilos del widget  | CSS Modules                                                         |
+| Tests               | `vitest` (backend: `buildUi` + schemas de zod)                      |
+| Deploy backend      | Railway.app                                                         |
+
+El resto de este documento (secciones 1–9) se conserva como contexto histórico de negocio/producto (sigue siendo válido) y de planeamiento técnico original (parcialmente superado, ver notas arriba).
+
+---
+
 ## 1. Qué es Oka
 
 **Oka** es la fintech de **IH Fintech S.A.** (RUC 20610782168), respaldada por Hiraoka.
@@ -36,7 +61,7 @@ Su propósito es reemplazar el formulario tradicional de onboarding por una conv
 
 1. Identifica al usuario por DNI
 2. Consulta su línea de crédito preaprobada
-3. Simula el crédito con seguros en tiempo real
+3. Simula el crédito y muestra un resumen de la oferta
 4. Convierte el lead en loan
 5. Lo lleva al desembolso
 
@@ -48,60 +73,89 @@ Su propósito es reemplazar el formulario tradicional de onboarding por una conv
 
 ---
 
-## 3. APIs existentes de Oka (ya construidas y documentadas)
+## 3. APIs existentes de Oka (tal como las consume el código real)
 
-Estas tres APIs ya existen y están listas para consumirse. Aoki las orquesta como herramientas (tool calling).
+Todas viven bajo una única `OKA_BASE_URL` (ver `backend/src/agent/tools/okaClient.ts`), autenticadas con `Authorization: Bearer {OKA_TOKEN}`. Aoki las orquesta como 4 tools (`backend/src/agent/tools/*.tool.ts`), cada una definida con `defineTool()` (el schema de `zod` genera el JSON schema que ve el modelo y valida el input en runtime).
 
-### 3.1 API Leads — consulta de línea preaprobada
+> Nota: los endpoints/shapes de esta sección son los reales usados por el código (`GET`/`POST` contra `OKA_BASE_URL`), que difieren del diseño inicial (`/leads/check` como POST, etc.) documentado en versiones anteriores de este archivo.
+
+### 3.1 `get_customer` — datos del cliente
 
 ```
-POST https://api.oka.com.pe/v1/leads/check
-Authorization: Bearer {OKA_API_KEY}
+GET {OKA_BASE_URL}/customers?type=DNI&number=45678912
+Authorization: Bearer {OKA_TOKEN}
+
+Response: { "id": "cust_123", "name": "Juan Pérez" }  (o 404 si no existe)
+```
+
+### 3.2 `consultar_leads` — consulta de línea preaprobada
+
+```
+GET {OKA_BASE_URL}/leads?documentType=DNI&documentNumber=45678912
+Authorization: Bearer {OKA_TOKEN}
+
+Response: [
+  { "id": "lead_abc", "status": "ACTIVE", "amount": 3500, "product": { "subType": "BNPL" } },
+  ...
+]
+```
+
+`subType: "BNPL"` → Crédito Oka, `subType: "LD"` → Efectivo Oka. Puede haber más de un lead `ACTIVE` a la vez.
+
+### 3.3 `simulate_credit` — simulador de crédito (monto/plazo)
+
+```
+POST {OKA_BASE_URL}/simulations
+Authorization: Bearer {OKA_TOKEN}
 Content-Type: application/json
 
-Body: { "dni": "45678912" }
-
-Response:
-{
-  "tiene_linea": true,
-  "linea_maxima": 3500,
-  "productos": ["efectivo_oka", "credito_oka"],
-  "lead_id": "abc123"
+Body: {
+  "customer": { "id": "cust_123" },
+  "loan": { "amount": 3500, "paymentDay": 15 },
+  "lead": { "id": "lead_abc" },
+  "insuranceTypes": ["LIFE"]
 }
+
+Response: [
+  { "term": 6,  "monthlyPayment": 620.5, "interestRate": 3.5, "totalRate": 20.1, "totalPayment": 3723 },
+  { "term": 12, "monthlyPayment": 330.2, "interestRate": 3.5, "totalRate": 35.4, "totalPayment": 3962 }
+]
 ```
 
-### 3.2 API Sales — conversión lead a loan
+### 3.4 `create_sale` — conversión de lead a venta (real)
 
 ```
-POST https://api.oka.com.pe/v1/sales/convert
-Authorization: Bearer {OKA_API_KEY}
+POST {OKA_BASE_URL}/leads/{leadId}/sales
+Authorization: Bearer {OKA_TOKEN}
 Content-Type: application/json
 
 Body:
 {
-  "lead_id": "abc123",
-  "monto": 2000,
-  "plazo": 10,
-  "producto": "efectivo_oka",
-  "seguros": ["vida_plus"]
+  "customer": { "id": "cust_123" },
+  "amount": 3500,
+  "currency": "PEN",
+  "term": 12,
+  "paymentDay": 15,
+  "insurancesTypes": ["LIFE"],
+  "simulation": { "type": "REGULAR" },
+  "metadata": { "origin": "CHATBOT" }
 }
 
-Response:
-{
-  "loan_id": "loan_xyz",
-  "status": "onboarding_pending",
-  "url_onboarding": "/onboarding/loan_xyz"
-}
+Response: { "id": "cf01bb81-9500-4ea7-bf84-a11f03e887bb" }
 ```
 
-### 3.3 API Seguros — simulación de seguros
+Solo se llama cuando el usuario confirma explícitamente el resumen ("Sí, confirmar") — es el paso final e irreversible. Ver `backend/src/agent/tools/create-sale.tool.ts`.
+
+### 3.5 (histórico, endpoint nunca existió) `simular_seguro` — simulación de seguros opcionales
+
+> ⚠️ Ver nota 3 de la sección 0: `POST /seguros/simular` nunca fue un endpoint real de Oka. Esta tool se eliminó por completo.
 
 ```
-POST https://api.oka.com.pe/v1/seguros/simular
-Authorization: Bearer {OKA_API_KEY}
+POST {OKA_BASE_URL}/seguros/simular
+Authorization: Bearer {OKA_TOKEN}
 Content-Type: application/json
 
-Body: { "monto": 2000, "plazo": 10 }
+Body: { "monto": 3500, "plazo": 12 }
 
 Response:
 {
@@ -113,6 +167,27 @@ Response:
 }
 ```
 
+### 3.6 (histórico, endpoint nunca existió) `convertir_lead_a_loan` — conversión lead a loan
+
+> ⚠️ Ver nota 3 de la sección 0: `POST /sales/convert` nunca fue un endpoint real de Oka. Reemplazada por `create_sale` (sección 3.4).
+
+```
+POST {OKA_BASE_URL}/sales/convert
+Authorization: Bearer {OKA_TOKEN}
+Content-Type: application/json
+
+Body:
+{
+  "lead_id": "lead_abc",
+  "monto": 3500,
+  "plazo": 12,
+  "producto": "credito_oka",
+  "seguros": ["vida_plus"]
+}
+
+Response: { "url_onboarding": "https://onboarding.oka.com.pe/loan_xyz" }
+```
+
 ---
 
 ## 4. Flujo principal del agente
@@ -120,37 +195,41 @@ Response:
 ```
 Usuario ingresa DNI
        ↓
-[TOOL] consultar_leads(dni)
+[TOOL] consultar_leads(dni) + get_customer(dni)  (para personalizar el saludo)
        ↓
-¿Tiene línea?
-  ├── NO  → Mensaje amable + captura de email → FIN
-  └── SÍ  → Muestra badge "¡Crédito preaprobado! hasta S/{linea_maxima}"
+¿Tiene algún lead con status ACTIVE?
+  ├── NO  → Mensaje amable → FIN
+  └── SÍ  → Muestra badge "¡Crédito preaprobado! hasta S/{monto_máximo}" (ui: product_selector)
                ↓
              Presenta productos como cards seleccionables:
-             - Crédito Oka: "Renueva tu hogar hoy y paga en cómodas cuotas"
-             - Efectivo Oka: "Dinero en tu cuenta en minutos, sin explicaciones"
+             - Crédito Oka (subType BNPL): "Renueva tu hogar hoy y paga en cómodas cuotas"
+             - Efectivo Oka (subType LD): "Dinero en tu cuenta en minutos, sin explicaciones"
                ↓
-             Usuario elige producto + monto + plazo
+             Usuario elige un producto
                ↓
-             [TOOL] simular_seguro(monto, plazo)
+             [TOOL] simulate_credit(customer_id, lead_id, amount, payment_day) → simulador interactivo (ui: credit_simulator)
                ↓
-             Muestra simulación:
-             - Cuota mensual
-             - TCEA
-             - Seguros opcionales: Vida Plus / Desempleo (con toggles)
+             Usuario ajusta el slider de monto → [TOOL] simulate_credit(...) de nuevo con el nuevo amount
                ↓
-             Usuario confirma
+             Usuario hace clic en "Ver resumen de mi crédito"
+             → 100% local en el widget (ui: sale_summary, sin ninguna llamada a Oka):
+               Producto, monto, cuotas, Vida ✓ incluido, TCEA
                ↓
-             [TOOL] convertir_lead_a_loan(lead_id, monto, plazo, producto, seguros)
+             "Modificar" (local, vuelve al slider) o "Sí, confirmar"
                ↓
-             Muestra resumen + redirige a url_onboarding
-             "Crear cuenta para desembolsar"
+             [TOOL] create_sale(lead_id, customer_id, amount, term, payment_day)
+               ↓
+             Muestra Loan ID + CTA "Inicia sesión para desembolsar" → personas.oka.com.pe (ui: sale_success)
 ```
+
+Cada paso de este flujo corresponde a un `ui.type` (discriminated union) y a un componente React homónimo en `widget/src/components/ui/`. La mayoría (`product_selector`, `credit_simulator`, `sale_success`) los devuelve `buildUi()` en `backend/src/agent/orchestrator.ts` a partir del último tool-call — la única excepción es `sale_summary`, que `Widget.tsx` construye enteramente en el cliente a partir del `credit_simulator` activo, sin pasar por el backend.
 
 ### Pasos del proceso (stepper visual)
 
-1. **Simular** — monto, plazo, seguros
-2. **Resumen** — resumen de la oferta
+> ⚠️ Esta sección describe un mockup/diseño aspiracional (panel lateral con stepper "Último paso"). Se evaluó explícitamente construirlo y se decidió **no** hacerlo: la UI real es un único panel de chat con tarjetas de UI generativa inline (mismo patrón que `product_selector`/`credit_simulator`/etc.), sin panel lateral ni stepper. Los "pasos" abajo son conceptuales, no un componente que exista en el código.
+
+1. **Simular** — monto, plazo
+2. **Resumen** — resumen de la oferta (Vida Plus incluido, sin seguro de Desempleo)
 3. **Confirmación** — confirmar antes de crear loan
 4. **Desembolso** — verificación de identidad + firma + cuenta
 
@@ -164,232 +243,87 @@ Usuario ingresa DNI
 
 ## 5. Arquitectura técnica
 
+### Real (MVP entregado y migrado)
+
 ```
-Webflow CMS (oka.com.pe)
-  └── Custom Code embed: <script src="https://agent.oka.com.pe/aoki-widget.js">
+Página host (ej. Webflow, oka.com.pe)
+  └── <script src=".../aoki-widget.js" data-api-url="https://agent.oka.com.pe/chat">
+         (React + TypeScript, compilado con Vite a un único IIFE)
          ↓ HTTP POST /chat
-Microservicio Aoki (Node.js · AWS ECS)
-  ├── Claude API (claude-sonnet-4-6) — orquestador
-  ├── Tool: consultar_leads    → API Leads Oka
-  ├── Tool: simular_seguro     → API Seguros Oka
-  └── Tool: convertir_lead_a_loan → API Sales Oka
-         ↓
-DynamoDB
-  ├── oka_agent_sessions   (TTL: 24h — Time To Live, expiración automática)
-  └── oka_agent_audit_logs (sin TTL — compliance SBS)
+Microservicio Aoki (Node.js + TypeScript · Railway.app)
+  ├── Groq (openai/gpt-oss-120b) — orquestador (groq-sdk)
+  ├── Tool: get_customer    → GET  {OKA_BASE_URL}/customers
+  ├── Tool: consultar_leads → GET  {OKA_BASE_URL}/leads
+  ├── Tool: simulate_credit → POST {OKA_BASE_URL}/simulations
+  └── Tool: create_sale     → POST {OKA_BASE_URL}/leads/{leadId}/sales
 ```
 
-### Stack tecnológico
+El resumen de la oferta (`sale_summary`, "Ver resumen"/"Modificar") no llama a ninguna tool ni a la API de Oka — se construye en el widget con los datos que ya trajo `simulate_credit`.
+
+Sin base de datos propia: cada request a `/chat` es sin estado en el servidor — el widget reenvía el historial completo de la conversación en cada turno (`messages`), y el backend responde con el historial actualizado.
+
+### Stack tecnológico real
 
 | Capa               | Tecnología                     | Estado                      |
 | ------------------ | ------------------------------ | --------------------------- |
-| CMS / Web          | Webflow                        | Existente                   |
-| Widget frontend    | JS puro (IIFE autocontenido)   | Nuevo                       |
-| Agente orquestador | Node.js + Express              | Nuevo microservicio         |
-| Modelo de lenguaje | Claude API (claude-sonnet-4-6) | Nuevo                       |
-| Base de datos      | DynamoDB                       | Existente (2 tablas nuevas) |
-| Infraestructura    | AWS ECS                        | Existente                   |
-| Autenticación      | JWT (reutilizado)              | Existente                   |
+| CMS / Web          | Webflow                                  | Existente     |
+| Widget frontend    | React + TypeScript (Vite, modo librería) | Implementado  |
+| Estilos del widget | CSS Modules                              | Implementado  |
+| Agente orquestador | Node.js + TypeScript + Express           | Implementado  |
+| Modelo de lenguaje | Groq (`openai/gpt-oss-120b`)             | Implementado  |
+| Validación runtime | zod (tool inputs + variables de entorno) | Implementado  |
+| Tests              | vitest (backend)                         | Implementado  |
+| Base de datos      | —                                         | No implementada (sin estado) |
+| Infraestructura    | Railway.app                              | Implementado  |
+| Autenticación      | —                                         | No implementada (post-MVP) |
 
-### Variables de entorno necesarias
+### Variables de entorno reales
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
-OKA_API_KEY=tu-token-oka
+GROQ_API_KEY=gsk_...
+OKA_BASE_URL=https://api.dev.oka.com.pe/v1
+OKA_TOKEN=tu-bearer-token
 PORT=3000
+CORS_ORIGIN=https://www.oka.com.pe
 ```
+
+Validadas al boot por `backend/src/config/env.ts` con `zod` — el servidor no arranca si falta alguna requerida.
+
+### Plan original (histórico, no implementado tal cual)
+
+El diseño inicial contemplaba Claude API (Anthropic), AWS ECS y DynamoDB (sesiones con TTL 24h + logs de auditoría sin TTL por compliance SBS). Ninguna de las tres se usó en el MVP real: se optó por Groq (costo/latencia), Railway (deploy más simple) y una arquitectura sin estado en servidor (el propio widget mantiene el historial). Si el proyecto pasa a producción con requisitos de auditoría/compliance, DynamoDB (o equivalente) para logs seguiría siendo la recomendación.
 
 ---
 
-## 6. Código base del MVP
+## 6. Código base real (post-migración a TypeScript / React)
 
-### 6.1 `package.json`
+> Esta sección reemplaza el ejemplo de código original del MVP (JS plano + Anthropic SDK), que quedó obsoleto tanto en el modelo usado (Groq, no Claude) como en el lenguaje (TypeScript, no JS). El código fuente completo vive en el repo — aquí solo se resume la forma, no se duplica línea por línea.
 
-```json
-{
-  "name": "aoki-agent-service",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.27.0",
-    "cors": "^2.8.5",
-    "express": "^4.18.2"
-  }
-}
-```
+### 6.1 Backend (`backend/src/`)
 
-### 6.2 `server.js` — backend del agente
+- **`agent/tools/tool.types.ts`** — `defineTool({ name, description, schema, execute })`: recibe un schema de `zod` y genera automáticamente el `input_schema` (JSON schema) que se envía al modelo vía `z.toJSONSchema()`, además de tipar `execute()`. Un único schema por tool es la fuente de verdad tanto para lo que ve el modelo como para la validación runtime.
+- **`agent/tools/*.tool.ts`** — una tool por archivo (`get_customer`, `consultar_leads`, `simulate_credit`, `create_sale`), cada una construida con `defineTool()` sobre `okaClient.ts` (`okaGet`/`okaPost`).
+- **`agent/orchestrator.ts`** — `runConversation(history)`: arma el loop de tool-calling contra Groq (`client.chat.completions.create`, máx. 5 rondas de tools), y `buildUi(messages)`: mapea el último tool-call relevante a un `UiPayload` (discriminated union: `product_selector | credit_simulator | sale_success | null`), con el `switch` chequeado exhaustivamente por el compilador. `sale_summary` no está en este union — lo construye el widget, no el backend.
+- **`agent/prompts.ts`** — `SYSTEM_PROMPT`, el mismo contenido de negocio que en el MVP original (reglas de cuándo llamar cada tool), solo movido a TypeScript.
+- **`config/env.ts`** — valida `GROQ_API_KEY`, `OKA_BASE_URL`, `OKA_TOKEN`, `PORT`, `CORS_ORIGIN` con `zod` al boot; falla rápido si falta algo.
+- **`routes/chat.routes.ts`** — `POST /chat`: valida `req.body.messages` con `zod` y delega en `runConversation`.
+- **`server.ts`** — bootstrap de Express (cors, rate limiting, monta las rutas).
 
-```javascript
-const express = require("express");
-const cors = require("cors");
-const Anthropic = require("@anthropic-ai/sdk");
+### 6.2 Widget (`widget/src/`)
 
-const app = express();
-const client = new Anthropic();
+- **`main.tsx`** — entry point: lee `data-api-url` del `<script>` (`document.currentScript`), monta `<Widget />` con `createRoot`.
+- **`Widget.tsx`** — dueño del estado (`history` para el payload al backend, `displayMessages` para las burbujas visuales, `isOpen`, `isSending`, `activeUi`, y `lastCreditSimulatorUi` para poder volver al slider cuando el usuario hace clic en "Modificar") y de `handleSend` (ida y vuelta al backend), `handleShowSummary` y `handleModify` (transiciones puramente locales, sin red).
+- **`api.ts`** — única llamada `fetch` a `/chat`.
+- **`types.ts`** — espejo a mano del contrato del backend (`ChatMessage`, `Ui` discriminated union) — sin paquete compartido entre los dos proyectos, con comentario apuntando a `orchestrator.ts` como fuente de verdad. Excepción documentada: `SaleSummaryUi` nunca la produce el backend, la construye `Widget.tsx`.
+- **`components/`** — `Launcher`, `ChatPanel`, `MessageList`, `MessageBubble`, `InputRow`, y `components/ui/` con un componente por `ui.type` (`ProductSelector`, `CreditSimulator`, `SaleSummary`, `SaleSuccess`, `OnboardingRedirect`, `OfferSelector`), despachados por `UiRenderer` con chequeo de exhaustividad.
+- **`styles/*.module.css`** — CSS Modules (clases hasheadas en build, sin colisión con la página host).
+- Build: `vite.config.ts` en modo librería (`build.lib`, formato `iife`) + `vite-plugin-css-injected-by-js` → un único `dist/aoki-widget.js`, mismo contrato de embed de un solo `<script>` que el widget original.
 
-app.use(cors({ origin: "https://www.oka.com.pe" }));
-app.use(express.json());
-
-// Herramientas disponibles para el agente
-const tools = [
-  {
-    name: "consultar_leads",
-    description:
-      "Consulta si un usuario tiene línea de crédito preaprobada en Oka.",
-    input_schema: {
-      type: "object",
-      properties: {
-        dni: { type: "string", description: "DNI del usuario, 8 dígitos" },
-      },
-      required: ["dni"],
-    },
-  },
-  {
-    name: "simular_seguro",
-    description: "Simula los seguros disponibles para un monto y plazo dado.",
-    input_schema: {
-      type: "object",
-      properties: {
-        monto: { type: "number", description: "Monto solicitado en soles" },
-        plazo: { type: "number", description: "Número de cuotas mensuales" },
-      },
-      required: ["monto", "plazo"],
-    },
-  },
-  {
-    name: "convertir_lead_a_loan",
-    description: "Convierte el lead en un loan y activa el onboarding.",
-    input_schema: {
-      type: "object",
-      properties: {
-        lead_id: { type: "string" },
-        monto: { type: "number" },
-        plazo: { type: "number" },
-        producto: { type: "string", enum: ["efectivo_oka", "credito_oka"] },
-        seguros: { type: "array", items: { type: "string" } },
-      },
-      required: ["lead_id", "monto", "plazo", "producto"],
-    },
-  },
-];
-
-// Ejecutor de herramientas — conecta con las APIs reales de Oka
-async function executeTool(name, input) {
-  const BASE = "https://api.oka.com.pe/v1";
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${process.env.OKA_API_KEY}`,
-  };
-
-  const endpoints = {
-    consultar_leads: { url: `${BASE}/leads/check`, body: { dni: input.dni } },
-    simular_seguro: {
-      url: `${BASE}/seguros/simular`,
-      body: { monto: input.monto, plazo: input.plazo },
-    },
-    convertir_lead_a_loan: { url: `${BASE}/sales/convert`, body: input },
-  };
-
-  const { url, body } = endpoints[name];
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${name} error: ${res.status}`);
-  return res.json();
-}
-
-// Prompt del sistema
-const SYSTEM_PROMPT = `
-Eres Aoki, el asistente de créditos de Oka (IH Fintech S.A.).
-Tu misión es ayudar al usuario a obtener su crédito preaprobado de forma rápida y sencilla.
-
-Reglas:
-- Saluda cordialmente y pide el DNI si el usuario no lo ha proporcionado.
-- Cuando tengas el DNI (8 dígitos numéricos), llama SIEMPRE a consultar_leads.
-- Si tiene línea: comunícalo con entusiasmo, muestra el monto máximo y pregunta qué producto necesita.
-- Si no tiene línea: sé amable, explica que no hay oferta disponible en este momento.
-- Cuando el usuario elija monto y plazo, llama a simular_seguro para mostrar la cuota exacta.
-- Presenta los seguros Vida Plus y Desempleo como opcionales con sus precios.
-- Cuando el usuario confirme, llama a convertir_lead_a_loan.
-- Nunca inventes montos, tasas ni cuotas. Usa solo los datos que devuelven las herramientas.
-- Responde siempre en español, de forma breve, amigable y clara.
-- Guarda el lead_id que devuelve consultar_leads para usarlo en convertir_lead_a_loan.
-`.trim();
-
-// Endpoint del chat
-app.post("/chat", async (req, res) => {
-  const { messages } = req.body;
-  if (!messages?.length)
-    return res.status(400).json({ error: "messages requerido" });
-
-  try {
-    let response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      tools,
-      messages,
-    });
-
-    // Loop de tool calling
-    while (response.stop_reason === "tool_use") {
-      const toolBlock = response.content.find((b) => b.type === "tool_use");
-      const { id, name, input } = toolBlock;
-      const toolResult = await executeTool(name, input);
-
-      response = await client.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        tools,
-        messages: [
-          ...messages,
-          { role: "assistant", content: response.content },
-          {
-            role: "user",
-            content: [
-              {
-                type: "tool_result",
-                tool_use_id: id,
-                content: JSON.stringify(toolResult),
-              },
-            ],
-          },
-        ],
-      });
-    }
-
-    const text = response.content.find((b) => b.type === "text")?.text ?? "";
-    res.json({ reply: text });
-  } catch (err) {
-    console.error("Aoki error:", err.message);
-    res.status(500).json({ error: "Error interno del agente" });
-  }
-});
-
-app.listen(process.env.PORT || 3000, () =>
-  console.log(`Aoki backend corriendo en :${process.env.PORT || 3000}`),
-);
-```
-
-### 6.3 `aoki-widget.js` — widget para Webflow
-
-Widget autocontenido (IIFE) con chat UI, colores brand Oka, indicador de typing e historial de conversación en memoria. Se embebe con una sola línea en Webflow Custom Code.
-
-> Ver archivo completo: `aoki-widget.js` (ya generado en sesión anterior)
-
-### 6.4 Embed en Webflow
+### 6.3 Embed en Webflow (sin cambios de contrato)
 
 ```html
 <!-- Pegar en Webflow → Settings → Custom Code → Footer Code -->
-<script src="https://agent.oka.com.pe/aoki-widget.js" defer></script>
+<script src="https://agent.oka.com.pe/aoki-widget.js" data-api-url="https://agent.oka.com.pe/chat" defer></script>
 ```
 
 ---
@@ -502,9 +436,9 @@ Al finalizar el mes debes poder mostrar:
 
 El DNI actúa como **registro suave**: identifica al usuario y personaliza la oferta sin pedir email ni contraseña. El registro formal aparece solo cuando el usuario ya confirmó que quiere el crédito, cuando la motivación es máxima.
 
-### ¿Por qué no usar LLMs gratuitos?
+### ¿Por qué Groq y no Claude API?
 
-Se evaluaron Llama 3.3 (Groq), Gemini Flash, Mistral, Qwen 2.5 y DeepSeek. La arquitectura es idéntica con cualquiera. Para el MVP se usa Claude API por calidad de razonamiento y seguimiento de instrucciones. Se puede migrar después.
+Se evaluaron Llama 3.3 / gpt-oss (Groq), Claude API, Gemini Flash, Mistral, Qwen 2.5 y DeepSeek. La arquitectura de tool-calling es prácticamente idéntica con cualquiera (mensajes + tools + loop de tool_calls). El MVP real se construyó sobre Groq (`openai/gpt-oss-120b`) por latencia/costo; el plan original de este documento contemplaba Claude API, pero no fue lo que se implementó. Migrar de proveedor implicaría sobre todo tocar `orchestrator.ts` (tipos de mensajes/tool_calls) — el resto de la arquitectura (tools, prompts, UI) es independiente del proveedor.
 
 ### ¿Qué es TTL 24h en DynamoDB?
 
@@ -544,4 +478,4 @@ Si estás en una nueva sesión de Claude con este documento, puedes:
 - Pedir que genere tests para el backend
 - Preguntar sobre cualquier decisión técnica o de negocio listada aquí
 
-**Todo el stack es Node.js + Claude API + APIs REST de Oka. Sin magia.**
+**Todo el stack es Node.js + TypeScript + Groq + APIs REST de Oka, con un widget en React + TypeScript. Sin magia.**

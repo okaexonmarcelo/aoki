@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aoki — demo build de producción</title>
+  </head>
+  <body>
+    <h1>Página de prueba — build de producción del widget Aoki</h1>
+    <p>
+      Esta página carga <code>dist/aoki-widget.js</code> directamente (el
+      artefacto real generado por <code>npm run build</code>), tal como lo
+      haría una página host real con un único &lt;script&gt;.
+    </p>
+
+    <script src="dist/aoki-widget.js" data-api-url="http://localhost:3000/chat"></script>
+  </body>
+</html>
